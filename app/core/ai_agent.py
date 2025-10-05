@@ -5,26 +5,58 @@ from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 
 from app.config.settings import settings
 
-def get_response_from_ai_agents(llm_id, query, allow_search, system_prompt):
-    # Initialize LLM
+
+def get_response_from_ai_agents(
+    llm_id: str,
+    query,
+    allow_search: bool,
+    system_prompt: str
+) -> str:
+    """
+    Main function to get responses from multiple AI agents (LLM + Tavily search).
+
+    Args:
+        llm_id (str): The name or ID of the LLM to use.
+        query (str | list[str]): User query or list of queries.
+        allow_search (bool): Whether to enable Tavily web search.
+        system_prompt (str): The system or context prompt for the agent.
+
+    Returns:
+        str: The generated AI response.
+    """
+
+    # ----------------------------
+    # 1. Initialize the language model
+    # ----------------------------
     llm = ChatGroq(model=llm_id)
 
-    # Add Tavily tool only if allowed
-    tools = [TavilySearch(max_results=2)] if allow_search else []
+    # ----------------------------
+    # 2. Configure tools
+    # ----------------------------
+    tools = []
+    if allow_search:
+        # ✅ Properly configured TavilySearch tool
+        # "search_depth" must be "basic" or "advanced"
+        # "max_results" controls how many results are fetched
+        tavily_tool = TavilySearch(max_results=5, search_depth="advanced")
+        tools.append(tavily_tool)
 
-    # Create the agent
+    # ----------------------------
+    # 3. Create the ReAct-style agent with LangGraph
+    # ----------------------------
     agent = create_react_agent(
         model=llm,
         tools=tools,
     )
 
-    # Ensure query is always wrapped as HumanMessage
+    # ----------------------------
+    # 4. Build conversation state
+    # ----------------------------
     if isinstance(query, list):
         user_messages = [HumanMessage(content=q) for q in query]
     else:
         user_messages = [HumanMessage(content=query)]
 
-    # Build conversation state with system + user messages
     state = {
         "messages": [
             SystemMessage(content=system_prompt),
@@ -32,11 +64,22 @@ def get_response_from_ai_agents(llm_id, query, allow_search, system_prompt):
         ]
     }
 
-    # Run the agent
-    response = agent.invoke(state)
+    # ----------------------------
+    # 5. Invoke the agent
+    # ----------------------------
+    try:
+        response = agent.invoke(state)
+    except Exception as e:
+        return f"Error while invoking agent: {e}"
 
-    # Extract AI messages
+    # ----------------------------
+    # 6. Extract and return AI responses
+    # ----------------------------
     messages = response.get("messages", [])
     ai_messages = [msg.content for msg in messages if isinstance(msg, AIMessage)]
 
-    return ai_messages[-1] if ai_messages else "No response generated."
+    if not ai_messages:
+        return "No response generated."
+
+    # Return only the latest AI message
+    return ai_messages[-1]
